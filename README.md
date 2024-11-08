@@ -108,7 +108,7 @@ Please refer to [DATASETS.md](DATASETS.md) for dataset preparation.
 
 ## Running the Code
 ### Training
-First download the [Mast3r](https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth) pretrained model and put it in the `./pretrained_weights` directory.
+First download the [MASt3R](https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth) pretrained model and put it in the `./pretrained_weights` directory.
 
 Then call `src/main.py` via:
 

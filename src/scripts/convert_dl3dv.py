@@ -151,10 +151,13 @@ if __name__ == "__main__":
             # Merge the images into the example.
             # from int to "frame_00001" format
             image_names = [f"frame_{timestamp.item():0>5}" for timestamp in example["timestamps"]]
-            example["images"] = [
-                images[image_name] for image_name in image_names
-            ]
-            # assert len(images) == len(example["timestamps"]), f"len(images)={len(images)}, len(example['timestamps'])={len(example['timestamps'])}"
+            try:
+                example["images"] = [
+                    images[image_name] for image_name in image_names
+                ]
+            except KeyError:
+                print(f"Skipping {key} because of missing images.")
+                continue
             assert len(example["images"]) == len(example["timestamps"]), f"len(example['images'])={len(example['images'])}, len(example['timestamps'])={len(example['timestamps'])}"
 
             # Add the key to the example.
