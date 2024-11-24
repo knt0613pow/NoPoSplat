@@ -231,7 +231,8 @@ class DatasetRE10k(IterableDataset):
     ) -> Float[Tensor, "batch 3 height width"]:
         torch_images = []
         for image in images:
-            image = Image.open(BytesIO(image.numpy().tobytes()))
+            # image = Image.open(BytesIO(image.numpy().tobytes()))
+            image = Image.fromarray(image.numpy())
             torch_images.append(self.to_tensor(image))
         return torch.stack(torch_images)
 
