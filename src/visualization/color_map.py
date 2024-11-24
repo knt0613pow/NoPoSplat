@@ -46,3 +46,11 @@ def apply_color_map_2d(
     # Convert to RGB.
     rgb = cspace_convert(interpolated, "CIELab", "sRGB1")
     return torch.tensor(rgb, device=x.device, dtype=torch.float32).clip(min=0, max=1)
+
+
+def normal_to_color(
+    normal: Float[Tensor, "*batch 3 height width"],
+) -> Float[Tensor, "*batch 3 height width"]:
+    color = normal / 2.0 + 0.5
+    color = color.clip(min=0, max=1)
+    return color
