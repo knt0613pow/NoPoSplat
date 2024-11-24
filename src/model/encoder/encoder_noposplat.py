@@ -237,6 +237,14 @@ class EncoderNoPoSplat(Encoder[EncoderNoPoSplatCfg]):
                 gaussians.opacities,
                 "b v r srf spp -> b (v r srf spp)",
             ),
+            rearrange(
+                gaussians.scales,
+                "b v r srf spp xyz -> b (v r srf spp) xyz",
+            ),
+            rearrange(
+                gaussians.rotations,
+                "b v r srf spp xyzw -> b (v r srf spp) xyzw",
+            ),
         )
 
     def get_data_shim(self) -> DataShim:
