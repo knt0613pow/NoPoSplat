@@ -36,7 +36,7 @@ from ..visualization.camera_trajectory.wobble import (
     generate_wobble,
     generate_wobble_transformation,
 )
-from ..visualization.color_map import apply_color_map_to_image
+from ..visualization.color_map import apply_color_map_to_image, normal_to_color
 from ..visualization.layout import add_border, hcat, vcat
 from ..visualization.validation_in_3d import render_cameras, render_projections
 from .decoder.decoder import Decoder, DepthRenderingMode
@@ -107,6 +107,7 @@ class ModelWrapper(LightningModule):
         losses: list[Loss],
         step_tracker: StepTracker | None,
         distiller: Optional[nn.Module] = None,
+        decoder2d: Optional[Decoder] = None,
     ) -> None:
         super().__init__()
         self.optimizer_cfg = optimizer_cfg
@@ -126,6 +127,8 @@ class ModelWrapper(LightningModule):
         if self.distiller is not None:
             convert_to_buffer(self.distiller, persistent=False)
             self.distiller_loss = Regr3D()
+
+        self.decoder2d = decoder2d
 
         # This is used for testing.
         self.benchmarker = Benchmarker()
@@ -226,9 +229,12 @@ class ModelWrapper(LightningModule):
                 self.global_step,
             )
 
+        if self.decoder2d is not None:
+            gaussians.scales[..., -1] = 0.0
+
         # align the target pose
         if self.test_cfg.align_pose:
-            output = self.test_step_align(batch, gaussians)
+            output, output2d = self.test_step_align(batch, gaussians)
         else:
             with self.benchmarker.time("decoder", num_calls=v):
                 output = self.decoder.forward(
@@ -239,6 +245,17 @@ class ModelWrapper(LightningModule):
                     batch["target"]["far"],
                     (h, w),
                 )
+            if self.decoder2d is not None:
+                with self.benchmarker.time("decoder2d", num_calls=v):
+                    output2d = self.decoder2d.forward(
+                        gaussians,
+                        batch["target"]["extrinsics"],
+                        batch["target"]["intrinsics"],
+                        batch["target"]["near"],
+                        batch["target"]["far"],
+                        (h, w),
+                    )
+
 
         # compute scores
         if self.test_cfg.compute_scores:
@@ -257,13 +274,34 @@ class ModelWrapper(LightningModule):
             self.log_dict(all_metrics)
             self.print_preview_metrics(all_metrics, methods, overlap_tag=overlap_tag)
 
+            if self.decoder2d is not None:
+                print("decoder 2d")
+                rgb_pred = output2d.color[0]
+                all_metrics = {
+                    f"lpips_ours_2d": compute_lpips(rgb_gt, rgb_pred).mean(),
+                    f"ssim_ours_2d": compute_ssim(rgb_gt, rgb_pred).mean(),
+                    f"psnr_ours_2d": compute_psnr(rgb_gt, rgb_pred).mean(),
+                }
+                methods = ['ours_2d']
+
+                self.log_dict(all_metrics)
+                # self.print_preview_metrics(all_metrics, methods, overlap_tag=overlap_tag)
+                print(all_metrics)
+
         # Save images.
         (scene,) = batch["scene"]
         name = get_cfg()["wandb"]["name"]
         path = self.test_cfg.output_path / name
         if self.test_cfg.save_image:
             for index, color in zip(batch["target"]["index"][0], output.color[0]):
-                save_image(color, path / scene / f"color/{index:0>6}.png")
+                save_image(color, path / scene / f"color_3d/{index:0>6}.png")
+            if self.decoder2d is not None:
+                for index, color in zip(batch["target"]["index"][0], output2d.color[0]):
+                    save_image(color, path / scene / f"color_2d/{index:0>6}.png")
+                for index, normal in zip(batch["target"]["index"][0], output2d.rend_normal[0]):
+                    save_image(normal_to_color(normal), path / scene / f"rend_normal_2d/{index:0>6}.png")
+
+
 
         if self.test_cfg.save_video:
             frame_str = "_".join([str(x.item()) for x in batch["context"]["index"][0]])
@@ -278,10 +316,19 @@ class ModelWrapper(LightningModule):
             comparison = hcat(
                 add_label(vcat(*context_img), "Context"),
                 add_label(vcat(*rgb_gt), "Target (Ground Truth)"),
-                add_label(vcat(*rgb_pred), "Target (Prediction)"),
+                add_label(vcat(*output.color[0]), "Target (Prediction)"),
             )
             save_image(comparison, path / f"{scene}.png")
-
+            if self.decoder2d is not None:
+                colorized_normal = torch.stack([normal_to_color(normal) for normal in output2d.rend_normal[0]])
+                comparison = hcat(
+                    add_label(vcat(*context_img), "Context"),
+                    add_label(vcat(*rgb_gt), "Target (Ground Truth)"),
+                    add_label(vcat(*output.color[0]), "Target (Prediction - Flat 3D)"),
+                    add_label(vcat(*output2d.color[0]), "Target (Prediction - 2D)"),
+                    add_label(vcat(*colorized_normal), "Normal (Prediction - 2D)"),
+                )
+                save_image(comparison, path / f"{scene}_2d.png")
     def test_step_align(self, batch, gaussians):
         self.encoder.eval()
         # freeze all parameters
@@ -309,10 +356,11 @@ class ModelWrapper(LightningModule):
             pose_optimizer = torch.optim.Adam(opt_params)
 
             extrinsics = batch["target"]["extrinsics"].clone()
+        
+
             with self.benchmarker.time("optimize"):
                 for i in range(self.test_cfg.pose_align_steps):
                     pose_optimizer.zero_grad()
-
                     output = self.decoder.forward(
                         gaussians,
                         extrinsics,
@@ -343,6 +391,16 @@ class ModelWrapper(LightningModule):
                         extrinsics = rearrange(new_extrinsic, "(b v) i j -> b v i j", b=b, v=v)
 
         # Render Gaussians.
+        output2d = None
+        if self.decoder2d is not None:
+            output2d = self.decoder2d.forward(
+                gaussians,
+                extrinsics,
+                batch["target"]["intrinsics"],
+                batch["target"]["near"],
+                batch["target"]["far"],
+                (h, w),
+            )
         output = self.decoder.forward(
             gaussians,
             extrinsics,
@@ -352,7 +410,7 @@ class ModelWrapper(LightningModule):
             (h, w),
         )
 
-        return output
+        return output, output2d
 
     def on_test_end(self) -> None:
         name = get_cfg()["wandb"]["name"]
@@ -636,6 +694,7 @@ class ModelWrapper(LightningModule):
                 k: ((s * v) + metrics[k]) / (s + 1)
                 for k, v in self.running_metrics.items()
             }
+            
             self.running_metric_steps += 1
 
         if overlap_tag is not None:

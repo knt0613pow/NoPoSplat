@@ -28,7 +28,7 @@ with install_import_hook(
     from src.misc.LocalLogger import LocalLogger
     from src.misc.step_tracker import StepTracker
     from src.misc.wandb_tools import update_checkpoint_path
-    from src.model.decoder import get_decoder
+    from src.model.decoder import get_decoder, get_2d_decoder, get_3d_decoder
     from src.model.encoder import get_encoder
     from src.model.model_wrapper import ModelWrapper
 
@@ -134,17 +134,17 @@ def train(cfg_dict: DictConfig):
             missing_keys, unexpected_keys = encoder.load_state_dict(ckpt_weights, strict=False)
         else:
             raise ValueError(f"Invalid checkpoint format: {weight_path}")
-
     model_wrapper = ModelWrapper(
         cfg.optimizer,
         cfg.test,
         cfg.train,
         encoder,
         encoder_visualizer,
-        get_decoder(cfg.model.decoder),
+        get_3d_decoder(cfg.model.decoder),
         get_losses(cfg.loss),
         step_tracker,
         distiller=distiller,
+        decoder2d=get_2d_decoder(cfg.model.decoder),
     )
     data_module = DataModule(
         cfg.dataset,
